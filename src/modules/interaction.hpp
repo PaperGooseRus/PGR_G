@@ -34,7 +34,9 @@ public:
         for (std::size_t i = 0; i < scene.obstacles.count; ++i) {
             const Obstacle& obstacle = scene.obstacles[i];
             if (obstacle.kind != ObjectKind::Ore &&
-                obstacle.kind != ObjectKind::WoodPile) continue;
+                obstacle.kind != ObjectKind::WoodPile &&
+                obstacle.kind != ObjectKind::Tree &&
+                obstacle.kind != ObjectKind::Rock) continue;
             const float d2 = distance_squared(position, obstacle.position);
             if (d2 < best2) {
                 best2 = d2;

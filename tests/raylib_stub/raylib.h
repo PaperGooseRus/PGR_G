@@ -10,6 +10,8 @@
 struct Vector2 { float x, y; };
 struct Vector3 { float x, y, z; };
 struct Color { unsigned char r, g, b, a; };
+struct Texture2D { unsigned id; };
+struct Font { Texture2D texture; };
 struct Camera3D { Vector3 position, target, up; float fovy; int projection; };
 struct Ray { Vector3 position, direction; };
 struct BoundingBox { Vector3 min, max; };
@@ -28,6 +30,12 @@ constexpr int KEY_LEFT_SHIFT = 7;
 constexpr int KEY_RIGHT_SHIFT = 8;
 constexpr int KEY_SPACE = 9;
 constexpr int KEY_E = 10;
+constexpr int KEY_I = 11;
+constexpr int KEY_J = 12;
+constexpr int KEY_T = 13;
+constexpr int KEY_C = 14;
+constexpr int KEY_P = 15;
+constexpr int KEY_R = 16;
 constexpr Color RAYWHITE{245, 245, 245, 255};
 constexpr Color GRAY{130, 130, 130, 255};
 constexpr Color LIGHTGRAY{200, 200, 200, 255};
@@ -75,4 +83,12 @@ inline const char* TextFormat(const char* fmt, ...) {
     std::vsnprintf(message, sizeof(message), fmt, args);
     va_end(args);
     return message;
+}
+
+inline bool FileExists(const char*) {return true;}
+inline Font LoadFontEx(const char*,int,int*,int) {return {{1}};}
+inline void UnloadFont(Font) {}
+inline void DrawTextEx(Font,const char*,Vector2,float,float,Color) {}
+inline Vector2 MeasureTextEx(Font,const char* text,float size,float) {
+    return {static_cast<float>(std::strlen(text))*size*0.46f,size};
 }

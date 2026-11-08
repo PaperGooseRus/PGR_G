@@ -10,4 +10,6 @@ build-*/
 *.log
 # Не публикуйте личные сохранения в репозитории.
 save/*.md
+save/*.sqlite
+save/*.sqlite-*
 !save/.gitkeep

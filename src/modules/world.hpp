@@ -57,13 +57,13 @@ private:
     }};
 
     inline static constexpr std::array<Npc, 4> kNpcs{{
-        {"Boran", "Blacksmith", "I need a metal blank to forge a blade. In v0.2 we will connect crafting.",
+        {"Боран", "Кузнец", "Кую клинки из металла. Теперь мир помнит происхождение сырья.",
          "", { 4.35f, 4.3f}, 0},
-        {"Mira", "Alchemist", "I can refine ore and experiment with elements. The core already knows how.",
+        {"Мира", "Алхимик", "Продавай мне руду. Здесь также проходят загадочные опыты.",
          "", {-4.40f, 4.1f}, 1},
-        {"Tor", "Carpenter", "Bring me wood and I will shape a handle, when inventory is connected.",
+        {"Тор", "Плотник", "Для деревянных деталей мне нужна настоящая древесина.",
          "", {-4.25f,-5.5f}, 2},
-        {"Kela", "Forester", "The trees are only scenery today. Resource gathering is the next step.",
+        {"Кела", "Лесник", "Деревья восстанавливаются. Их древесину добывают все.",
          "", {-9.0f, 9.5f}, 3}
     }};
 };

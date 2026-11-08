@@ -1,9 +1,9 @@
 # Doxygen: генерация документации без изменения исходного кода.
 PROJECT_NAME           = "RPG 3D Client API"
-PROJECT_NUMBER         = "0.1-refactor"
-PROJECT_BRIEF          = "Независимые модули 3D-клиента на C++17"
+PROJECT_NUMBER         = "0.2-russian-ledger"
+PROJECT_BRIEF          = "Русская 3D RPG, экономика, редкие открытия и события SHA-256"
 OUTPUT_DIRECTORY       = build/doxygen
-INPUT                  = src docs/API.md docs/ARCHITECTURE.md
+INPUT                  = src docs/API.md docs/ARCHITECTURE.md docs/SECURITY.md docs/GAMEPLAY.md
 FILE_PATTERNS          = *.hpp *.cpp *.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = docs/API.md

@@ -1,87 +1,54 @@
-# RPG 3D Client: API и правила использования
+# Публичные контракты API, RPG v0.2
 
-> API графического клиента **исходного уровня (C++17)**. Не путать с внешним сетевым API или бинарным ABI. Подробности каждого типа и метода находятся в Doxygen-комментариях `src/api/contracts.hpp` и `src/modules/*.hpp`.
+## Общая модель
 
-## Публичный API независимых модулей
+Контракты определены в `src/api/contracts.hpp` (3D) и `src/api/economy_contracts.hpp` (экономика). Они не используют библиотеку raylib, SQLite или OpenSSL. Соседние модули не включаются напрямую. **Только `Application` в `src/main.cpp` объединяет модули**.
 
-| Тип | Интерфейс | Назначение, сложность |
-|---|---|---|
-| `World` | `SceneView view() const noexcept` | Невладеющий вид статической геометрии, O(1), без аллокаций |
-| `Collision` | `blocked(scene, point, radius)` | Пересечение карты и NPC, O(N+M), без аллокаций |
-| `Collision` | `slide(scene, point, delta, radius)` | Скольжение по осям, до двух проверок blocked |
-| `Collision` | `overlaps(center, radius, rectCenter, halfSize)` | Круг и AABB, O(1) |
-| `Movement` | `step(player, input, dt)` | Только кинематика и высота прыжка; возвращает `Vec2` |
-| `InteractionSystem` | `closest(scene, position, maxDistance)` | Поиск NPC/ресурса по квадрату дистанции, O(N+M) |
-| `CameraSystem` | `make(scene, player, pitch, distance)` | Камера с raycast AABB, требует raylib |
-| `Renderer` | `scene(scene, player)` | Рисование 3D-примитивов в активном BeginMode3D |
-| `Renderer` | `labels(scene, camera, position)` | 2D-подписи NPC |
-| `Renderer` | `hud(scene, player, hud)` | 2D-интерфейс и диалоги |
-| `Application` | `run()` | Корневая координация модулей, определён только в main.cpp |
+`ActorId`: 64-битный ID персонажа, устанавливаемый доверенным кодом. В локальной демонстрации `1` — игрок, `2` — NPC-торговец, `3` — тестовый второй игрок. Для мультиплеера потребуется связь ID с авторизованной сессией на сервере.
 
-### Контракты на данные
+`Asset`: `{AssetKind, code, quantity, id}`. `Resource`: `ore`, `wood`, `gem`. `Currency`: `gold`, `silver`. `UniqueItem`: `code=item`, положительный ID, `quantity=1`.
 
-* `Vec2` задаёт горизонтальные **X и Z** в метрах; вертикальная ось принадлежит 3D-представлению.
-* `SceneView` содержит два невладеющих `View<T>` и границы карты; копирование `SceneView` не копирует массивы.
-* `Npc` содержит **статические** строки, все поля доступны только для чтения из сцены. Для локализованных строк нужен отдельный модуль/слой ресурсов.
-* `Player` содержит только трансформ и визуальный прыжок. Не путать с персонажем `Actor` из `core_v3`: они ещё не связаны.
-* `Interaction::index` обращается к соответствующему набору `SceneView` и актуален в текущем снимке мира. Для `Type::None` индекс недействителен.
-* `HudState::activeDialogue` должен быть `-1` или корректным индексом NPC.
+`EconomyResult`: `{code, message, id}`, где `id` — ID предмета, сделки или события. Ожидаемые ошибки (мало средств, не тот владелец, уже закрыто) возвращаются кодом. Исключения зарезервированы для нарушений целостности БД, ошибок SQL/криптографии.
 
-### Пример внешнего использования без raylib
+## LedgerStore (`src/modules/ledger_store.hpp`)
 
-```cpp
-#include "modules/world.hpp"
-#include "modules/movement.hpp"
-#include "modules/collision.hpp"
-#include "modules/interaction.hpp"
+| Метод | Результат и эффекты |
+|---|---|
+| `LedgerStore(path)` | Открыть или создать SQLite, проверить генезис и всю цепочку событий. Несогласованная БД блокирует запуск. |
+| `register_node(id,material,capacity,regenSeconds)` | Создать узел мира один раз. Повторная инициализация не восстанавливает запас. |
+| `node(id)` | Вернуть видимый всем `NodeSnapshot`. |
+| `harvest(actor,nodeId)` | Списать 1 общий ресурс, зачислить 1 личный. Для руды возможен бонусный кристалл. Атомарно. |
+| `regenerate(nowUnixSeconds)` | Восстановить природные ресурсы по расписанию. Вызывается редко, не на каждом кадре. |
+| `inventory(observer,owner,out)` | Заполнить `out` только при `observer == owner` и существующем персонаже. При отказе `out` не меняется. |
+| `create_offer(seller,buyer,give,take)` | Проверить стороны и активы, изъять/зарезервировать `give`, создать открытый контракт, записать событие. |
+| `accept_offer(buyer,offerId)` | Проверить цену/средства и атомарно передать два актива. Повторное подтверждение отклоняется. |
+| `cancel_offer(seller,offerId)` | Вернуть зарезервированный актив, если контракт открыт. |
+| `offer(viewer,id,out)` | Доступно только участникам договора. |
+| `pending_offer(seller,buyer)` | Вернуть ID старейшего активного договора для восстановления работы NPC. |
+| `meditate(actor,time)` | Зафиксировать один ритуал раз в игровой день. |
+| `register_jump(actor)` | Зафиксировать подтверждённый физикой прыжок. |
+| `ritual_context(actor)` | Число прыжков и дней ритуалов. |
+| `rare_rule()` | Получить правило мира из доверенного слоя симуляции; клиент не должен публиковать его как подсказку. |
+| `synthesize1024(actor,roll,eligible)` | После внешней валидации условий и случайного исхода потратить реагенты, при успехе создать единственный предмет и акт открытия. |
+| `events_for(observer,maxCount)` | Только публичные или адресованные данному наблюдателю события. |
+| `verify()` | Пересчитать цепочку `SHA-256`, commitment правила и хеш текущего состояния. |
 
-int main() {
-    rpg3d::World world;
-    rpg3d::Player hero;
-    const rpg3d::SceneView scene = world.view();
+**Владение:** `LedgerStore` единолично владеет SQLite-соединением. `InventorySnapshot` и `EventRecord` — копии-представления для UI. `SceneView` и поля `HudState` — невладеющие ссылки на данные `Application` на время кадра.
 
-    const rpg3d::MovementInput input{1.0f, 0.0f, false, false};
-    const rpg3d::Vec2 proposed = rpg3d::Movement::step(hero, input, 1.0f / 60.0f);
-    hero.position = rpg3d::Collision::slide(scene, hero.position, proposed);
+**Потоки:** текущая реализация предполагает, что все методы `LedgerStore` вызываются одним потоком симуляции. Нельзя одновременно вызывать `verify`, `harvest` и `accept_offer` с нескольких потоков на одном экземпляре. В будущем отдельный сервер/поток будет обрабатывать очередь команд последовательно.
 
-    const auto target = rpg3d::InteractionSystem::closest(scene, hero.position);
-    return target.type == rpg3d::Interaction::Type::None ? 0 : 1;
-}
-```
+## TradeRules (`src/modules/trade_rules.hpp`)
 
-Компиляция (Linux / MSYS2, без raylib):
+`valid_asset(asset)` и `valid_offer(seller,buyer,give,take)` — чистая валидация контракта, без чтения БД. `npc_accepts(offer)` — минимальный белый список условий для демонстрационного NPC, а не подмена согласия живого игрока. В `Application` NPC получает только разрешённые им предложения.
 
-```bash
-g++ -std=c++17 -Isrc example.cpp -o example
-```
+## RareDiscovery (`src/modules/rare_discovery.hpp`)
 
-### Использование камеры и рендерера
+`eligible(context,rule)` — чистая проверка условий. `secure_roll()` — равномерный криптографический исход `[0..999999]` через OpenSSL `RAND_bytes` с rejection sampling. `success(roll)` — успех при нуле. Для тестов можно передать нулевой исход непосредственно в хранилище, но GUI этого не позволяет. Никакой VRF пока нет.
 
-`CameraSystem` и `Renderer` зависят **только** от `raylib.h` и `contracts.hpp`, но не друг от друга. Внешний вызывающий код обязан:
+## Renderer (`src/modules/renderer.hpp`)
 
-1. Инициализировать окно `InitWindow()` в том же потоке.
-2. Каждый кадр получить актуальные `SceneView` и `Player`.
-3. Вызвать `CameraSystem::make()`.
-4. Обрамить `Renderer::scene` вызовами `BeginDrawing`, `BeginMode3D`, `EndMode3D`, `EndDrawing`.
-5. После выхода из 3D вызвать `Renderer::labels` и `Renderer::hud`.
-6. В конце вызвать `CloseWindow()`.
+`initialize()` после `InitWindow`, `shutdown()` до `CloseWindow`. Использует Segoe UI / Arial из системной папки Windows или открытые системные шрифты Linux, **не поставляет TTF в архиве**. `scene`, `labels`, `hud` рисуют данные, никогда не изменяют экономику. `HudState::events` и `HudState::inventory` являются невладеющими указателями, действительными во время вызова.
 
-В этой версии вызывающий код — **только `Application` из `src/main.cpp`**.
+## Коды ошибок
 
-## Принципы расширения
-
-**Единообразие:** методы названы по действию (`step`, `slide`, `closest`, `make`) и принимают вид данных вместо конкретного класса другого модуля. Всё, что отрисовывается, приходит из состояния, не из скрытого глобального синглтона.
-
-**Типовые сценарии быстрые:** один статический мир, без сериализации или файлового I/O в кадре; поиск расстояний без `sqrt`; движение без пересборки сцены; UI без временных строк.
-
-**Чем меньше, тем быстрее (когда это обосновано):** низкая аллокационная нагрузка, компактный набор модулей, отсутствие тяжёлых абстракций. Меньший объём кода сам по себе не гарантирует скорость; изменения оцениваются тестами и измерениями.
-
-## Генерация Doxygen
-
-Установите Doxygen любым доступным способом, затем из корня проекта:
-
-```bash
-doxygen Doxyfile
-```
-
-Откройте `build/doxygen/html/index.html`. Если используется CMake и найден Doxygen, доступна команда `cmake --build build --target docs`.
+`Ok`, `Invalid`, `AccessDenied`, `Insufficient`, `Depleted`, `NotFound`, `Conflict`, `AlreadyProcessed`, `ConditionsNotMet`, `FailedRoll`. `FailedRoll` — не ошибка БД: попытка прошла корректно, материалы потрачены, но редкий синтез не удался.

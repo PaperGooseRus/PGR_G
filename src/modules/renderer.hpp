@@ -1,28 +1,52 @@
 #pragma once
 /**
  * @file renderer.hpp
- * @brief Программная геометрия из кубов и простой HUD без динамических строк.
- * @details Модуль является «потребителем» общих данных: не вызывает логику
- *          игры, не владеет сценой, не изменяет игрока или NPC.
+ * @brief Русскоязычный 3D-клиент с системным шрифтом кириллицы.
+ * @details Модуль только рисует невладеющие DTO; не читает SQLite и не изменяет мир.
+ *          Прямоугольники и кубы формируются программно, Blender не нужен.
  */
-
 #include "api/contracts.hpp"
 #include "raylib.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace rpg3d {
-
-/** @brief Отрисовка прототипа; все методы статические и не хранят состояние. */
+/** @brief Обёртка над графикой и шрифтом с явным жизненным циклом. */
 class Renderer final {
 public:
     /**
-     * @brief Нарисовать землю, объекты, NPC и игрока внутри BeginMode3D.
-     * @param scene Снимок данных мира.
-     * @param player Положение и направление игрока.
-     * @pre Активен режим 3D raylib.
-     * @note Нет выделений памяти и внешних моделей, только геопримитивы.
+     * @brief Загрузить установленный системный TTF с кириллицей.
+     * @return false, если системный шрифт не обнаружен.
+     * @note Вызывать после InitWindow в главном графическом потоке.
      */
+    bool initialize() {
+        static constexpr const char* paths[] = {
+            "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"
+        };
+        std::array<int, 96+320+2> codepoints{};
+        int count=0;
+        for (int ch=32;ch<128;++ch) codepoints[count++]=ch;
+        for (int ch=0x0400;ch<=0x053F;++ch) codepoints[count++]=ch;
+        codepoints[count++]=0x2116; // №
+        codepoints[count++]=0x20bd; // ₽
+        for (const char* path : paths) {
+            if (!FileExists(path)) continue;
+            font_=LoadFontEx(path,28,codepoints.data(),count);
+            if (font_.texture.id!=0) { loaded_=true;return true; }
+        }
+        return false;
+    }
+
+    /** @brief Освободить GPU-текстуру шрифта до CloseWindow. */
+    void shutdown() noexcept {
+        if (loaded_) UnloadFont(font_);
+        loaded_=false;
+    }
+
+    /** @brief Нарисовать геометрию внутри BeginMode3D. */
     static void scene(SceneView scene, const Player& player) noexcept {
         const float mapSize = scene.halfExtent * 2.0f;
         DrawCube({0.0f, -0.46f, 0.0f}, mapSize, 0.9f, mapSize,
@@ -45,110 +69,145 @@ public:
                       Color{69, 133, 201, 255}, player.yaw, true);
     }
 
-    /**
-     * @brief Нарисовать ярлыки NPC рядом с героем (2D-проход).
-     * @param scene Список NPC; не копируется.
-     * @param camera Камера текущего кадра.
-     * @param playerPosition Координаты игрока.
-     * @pre EndMode3D уже был вызван, но BeginDrawing ещё активен.
-     */
-    static void labels(SceneView scene, Camera3D camera,
-                       Vec2 playerPosition) noexcept {
-        for (const Npc& npc : scene.npcs) {
-            if (distance_squared(npc.position, playerPosition) > 100.0f) continue;
-            const Vector2 screen = GetWorldToScreen(at(npc.position, 2.25f), camera);
-            const int width = MeasureText(npc.profession, 18);
-            DrawRectangle(static_cast<int>(screen.x - width / 2 - 6),
-                          static_cast<int>(screen.y - 4), width + 12, 24,
-                          Color{20, 29, 39, 210});
-            DrawText(npc.profession, static_cast<int>(screen.x - width / 2),
-                     static_cast<int>(screen.y), 18, RAYWHITE);
+    /** @brief Вывести названия профессий NPC над их кубическими фигурами. */
+    void labels(SceneView scene,Camera3D camera,Vec2 playerPosition) const noexcept {
+        for (const Npc& npc:scene.npcs) {
+            if (distance_squared(npc.position,playerPosition)>100.0f) continue;
+            const Vector2 atScreen=GetWorldToScreen(at(npc.position,2.25f),camera);
+            const int textWidth=width(npc.profession,18);
+            DrawRectangle(static_cast<int>(atScreen.x)-textWidth/2-8,
+                static_cast<int>(atScreen.y)-5,textWidth+16,27,Color{20,29,39,210});
+            text(npc.profession,static_cast<int>(atScreen.x)-textWidth/2,
+                static_cast<int>(atScreen.y),18,RAYWHITE);
         }
     }
 
     /**
-     * @brief Нарисовать HUD, диалог и справку в 2D-режиме.
-     * @param scene Набор NPC для раскрытия индекса диалога и цели.
-     * @param player Состояние героя для отображения координат.
-     * @param hud Состояние UI, полученное от Application.
-     * @pre BeginDrawing активен, BeginMode3D завершён.
-     * @warning activeDialogue и nearby.index должны соответствовать scene;
-     *          Application дополнительно проверяет их перед передачей.
+     * @brief Нарисовать русскоязычный HUD, инвентарь, журнал и диалог.
+     * @param scene Геометрия, содержащая NPC.
+     * @param player Текущая позиция персонажа.
+     * @param hud Невладеющие ссылки на подготовленные Application снимки.
      */
-    static void hud(SceneView scene, const Player& player,
-                    const HudState& hud) noexcept {
-        const int width = GetScreenWidth();
-        const int height = GetScreenHeight();
-        DrawRectangle(14, 14, 375, 76, Color{22, 33, 43, 210});
-        DrawText("RPG 3D  |  modular v0.1", 26, 24, 22, RAYWHITE);
-        DrawText(TextFormat("Position: %.1f, %.1f   NPC: %d", player.position.x,
-                            player.position.z, static_cast<int>(scene.npcs.count)),
-                 26, 56, 18, Color{184, 212, 220, 255});
-        DrawText("WASD move  |  Mouse look  |  E interact  |  F1 help",
-                 18, height - 34, 18, RAYWHITE);
-        DrawText("TAB cursor  |  Shift sprint  |  Space jump  |  ESC quit",
-                 18, height - 57, 18, RAYWHITE);
+    void hud(SceneView scene,const Player& player,const HudState& hud) const noexcept {
+        const int w=GetScreenWidth(),h=GetScreenHeight();
+        DrawRectangle(14,14,460,92,Color{22,33,43,218});
+        text("RPG 3D | Кубическая деревня v0.2",25,25,22,RAYWHITE);
+        text(TextFormat("X: %.1f  Z: %.1f | События: %lld",player.position.x,player.position.z,
+            static_cast<long long>(hud.discoveries)),25,58,18,Color{184,212,220,255});
+        text("WASD — движение  |  E — действие  |  I — инвентарь  |  J — журнал",
+            18,h-33,17,RAYWHITE);
+        text("T — продать  |  C — обмен валют  |  P — молитва  |  R — опыт  |  F1 — помощь",
+            18,h-59,17,RAYWHITE);
 
-        if (hud.nearby.type != Interaction::Type::None &&
-            hud.activeDialogue == -1) {
-            const char* title = "Resource deposit";
-            if (hud.nearby.type == Interaction::Type::Npc &&
-                hud.nearby.index < scene.npcs.count) {
-                title = scene.npcs[hud.nearby.index].profession;
-            }
-            const int textWidth = MeasureText(title, 21);
-            DrawRectangle(width / 2 - textWidth / 2 - 90, height - 130,
-                          textWidth + 180, 42, Color{20, 29, 39, 225});
-            DrawText(TextFormat("[E] %s", title),
-                     width / 2 - textWidth / 2 - 32, height - 119, 21, RAYWHITE);
+        if (hud.nearby.type!=Interaction::Type::None && hud.activeDialogue<0 &&
+            !hud.showInventory && !hud.showJournal) {
+            const char* target="Ресурс";
+            if (hud.nearby.type==Interaction::Type::Npc &&
+                hud.nearby.index<scene.npcs.count) target=scene.npcs[hud.nearby.index].profession;
+            const int labelWidth=width(target,20);
+            DrawRectangle(w/2-labelWidth/2-85,h-140,labelWidth+170,47,Color{20,29,39,220});
+            text("[E]",w/2-labelWidth/2-68,h-128,20,YELLOW);
+            text(target,w/2-labelWidth/2-18,h-128,20,RAYWHITE);
+            if (hud.nearby.type==Interaction::Type::Resource && hud.resourceRemaining>=0)
+                text(TextFormat("Остаток: %lld",static_cast<long long>(hud.resourceRemaining)),
+                     w/2-90,h-174,18,RAYWHITE);
         }
-
-        if (hud.activeDialogue >= 0 &&
-            static_cast<std::size_t>(hud.activeDialogue) < scene.npcs.count) {
-            const Npc& npc = scene.npcs[static_cast<std::size_t>(hud.activeDialogue)];
-            DrawRectangle(width / 2 - 380, height - 225, 760, 126,
-                          Color{15, 26, 36, 240});
-            DrawRectangleLines(width / 2 - 380, height - 225, 760, 126,
-                               Color{116, 158, 164, 255});
-            DrawText(TextFormat("%s - %s", npc.name, npc.profession),
-                     width / 2 - 360, height - 207, 23,
-                     Color{243, 215, 147, 255});
-            DrawText(npc.dialogueLine1, width / 2 - 360, height - 168, 18, RAYWHITE);
-            DrawText(npc.dialogueLine2, width / 2 - 360, height - 143, 18, RAYWHITE);
-            DrawText("E - close", width / 2 + 260, height - 123, 15, LIGHTGRAY);
+        if (hud.activeDialogue>=0 && static_cast<std::size_t>(hud.activeDialogue)<scene.npcs.count) {
+            const Npc& npc=scene.npcs[static_cast<std::size_t>(hud.activeDialogue)];
+            DrawRectangle(w/2-390,h-250,780,139,Color{15,26,36,237});
+            DrawRectangleLines(w/2-390,h-250,780,139,Color{116,158,164,255});
+            text(npc.name,w/2-369,h-237,24,Color{243,215,147,255});
+            text(npc.dialogueLine1,w/2-368,h-202,19,RAYWHITE);
+            if (hud.activeDialogue==1)
+                text("[T] Продать руду (10 зол.)  [C] Обменять 5 зол. на 20 серебра",
+                     w/2-369,h-169,17,YELLOW);
+            text("[E] Закрыть",w/2+234,h-144,16,LIGHTGRAY);
+        }
+        if (hud.showInventory && hud.inventory) {
+            DrawRectangle(w/2-265,h/2-210,530,410,Color{15,26,36,246});
+            DrawRectangleLines(w/2-265,h/2-210,530,410,Color{116,158,164,255});
+            text("ЛИЧНЫЙ ИНВЕНТАРЬ",w/2-240,h/2-188,25,RAYWHITE);
+            const InventorySnapshot& inv=*hud.inventory;
+            text(TextFormat("Руда: %lld",static_cast<long long>(inv.ore)),w/2-230,h/2-138,21,RAYWHITE);
+            text(TextFormat("Древесина: %lld",static_cast<long long>(inv.wood)),w/2-230,h/2-103,21,RAYWHITE);
+            text(TextFormat("Кристаллы: %lld",static_cast<long long>(inv.gem)),w/2-230,h/2-68,21,RAYWHITE);
+            text(TextFormat("Золото: %lld",static_cast<long long>(inv.gold)),w/2-230,h/2-20,21,YELLOW);
+            text(TextFormat("Серебро: %lld",static_cast<long long>(inv.silver)),w/2-230,h/2+15,21,RAYWHITE);
+            text(TextFormat("Уникальных предметов: %d",static_cast<int>(inv.uniqueItems.size())),
+                 w/2-230,h/2+62,20,Color{193,215,245,255});
+            if (!inv.uniqueItems.empty())
+                text(TextFormat("ID предмета: %lld",static_cast<long long>(inv.uniqueItems.front())),
+                    w/2-230,h/2+97,18,RAYWHITE);
+            text("[I] Закрыть",w/2-230,h/2+158,17,LIGHTGRAY);
+        }
+        if (hud.showJournal) {
+            DrawRectangle(w/2-385,h/2-230,770,460,Color{15,26,36,247});
+            DrawRectangleLines(w/2-385,h/2-230,770,460,Color{116,158,164,255});
+            text("ЖУРНАЛ СОБЫТИЙ (SHA-256)",w/2-361,h/2-208,24,RAYWHITE);
+            for (std::size_t i=0;i<hud.eventCount && i<9;++i) {
+                const EventRecord& e=hud.events[i];
+                text(TextFormat("№%lld",static_cast<long long>(e.sequence)),
+                    w/2-360,h/2-161+static_cast<int>(i)*35,17,YELLOW);
+                text(event_name(e.type),w/2-289,h/2-161+static_cast<int>(i)*35,17,RAYWHITE);
+                text(TextFormat("%.12s",e.hash.c_str()),w/2+212,
+                     h/2-161+static_cast<int>(i)*35,15,Color{170,195,207,255});
+            }
+            text("[J] Закрыть  |  Полные записи доступны в SQLite",w/2-360,h/2+194,17,LIGHTGRAY);
         }
         if (hud.showHelp) {
-            DrawRectangle(width / 2 - 315, height / 2 - 140, 630, 250,
-                          Color{17, 25, 35, 245});
-            DrawRectangleLines(width / 2 - 315, height / 2 - 140, 630, 250,
-                               Color{123, 164, 176, 255});
-            DrawText("FIRST PLAYABLE SCENE", width / 2 - 287, height / 2 - 114,
-                     27, RAYWHITE);
-            DrawText("W A S D      Walk relative to the camera", width / 2 - 283,
-                     height / 2 - 63, 20, RAYWHITE);
-            DrawText("Mouse        Rotate camera / player", width / 2 - 283,
-                     height / 2 - 32, 20, RAYWHITE);
-            DrawText("E            Talk to nearby NPC", width / 2 - 283,
-                     height / 2 - 1, 20, RAYWHITE);
-            DrawText("Tab / F1     Release cursor / hide help", width / 2 - 283,
-                     height / 2 + 30, 20, RAYWHITE);
-            DrawText("Alchemy, inventory and crafting arrive in v0.2+.",
-                     width / 2 - 283, height / 2 + 72, 18,
-                     Color{181, 209, 218, 255});
+            DrawRectangle(w/2-417,h/2-225,834,440,Color{17,25,35,248});
+            DrawRectangleLines(w/2-417,h/2-225,834,440,Color{123,164,176,255});
+            text("СПРАВКА ПО ИГРЕ",w/2-385,h/2-198,27,RAYWHITE);
+            const char* lines[]={
+                "W A S D — ходьба, Shift — бег, Space — прыжок",
+                "Мышь — камера, Tab — освободить курсор",
+                "E — добыть ресурс или поговорить с NPC",
+                "I — приватный инвентарь, J — доступные события",
+                "У алхимика: T — продажа руды, C — обмен валют",
+                "У алхимика: P — молитва раз в игровой день",
+                "У алхимика: R — редкий эксперимент (шанс 1 / 1 000 000)",
+                "F1 — закрыть справку, Esc — выйти"
+            };
+            int pos=h/2-150;
+            for (const char* line:lines) {text(line,w/2-382,pos,18,RAYWHITE);pos+=42;}
         }
-        if (hud.cursorReleased) {
-            DrawText("CURSOR FREE: press TAB to return to the game",
-                     20, 105, 18, YELLOW);
+        if (hud.cursorReleased)
+            text("Курсор свободен. Нажми Tab, чтобы вернуться",18,118,18,YELLOW);
+        if (hud.pendingTrade)
+            text("NPC исполняет торговый контракт...",18,150,18,YELLOW);
+        if (hud.notice && hud.notice[0]) {
+            DrawRectangle(20,190,std::min(1030,w-40),44,Color{19,31,42,232});
+            text(hud.notice,30,200,18,RAYWHITE);
         }
-        if (hud.resourceNotice) {
-            DrawRectangle(20, 134, 525, 47, Color{19, 31, 42, 228});
-            DrawText("Resource gathering will be connected in v0.2",
-                     32, 148, 19, RAYWHITE);
-        }
-        DrawFPS(width - 94, 16);
+        DrawFPS(w-100,16);
     }
 
 private:
+    Font font_{}; ///< GPU-шрифт; владение только у Renderer.
+    bool loaded_=false;
+
+    /** @brief Русский текст через заранее загруженный TTF. */
+    void text(const char* s,int x,int y,int size,Color color) const noexcept {
+        DrawTextEx(font_,s,Vector2{static_cast<float>(x),static_cast<float>(y)},
+                   static_cast<float>(size),1.0f,color);
+    }
+    int width(const char* s,int size) const noexcept {
+        return static_cast<int>(MeasureTextEx(font_,s,static_cast<float>(size),1.0f).x);
+    }
+    static const char* event_name(const std::string& kind) noexcept {
+        if (kind=="genesis") return "Создан мир";
+        if (kind=="harvest") return "Добыча ресурсов";
+        if (kind=="regenerate") return "Природа восстановилась";
+        if (kind=="offer_open") return "Открыта сделка";
+        if (kind=="offer_done") return "Сделка исполнена";
+        if (kind=="offer_cancel") return "Сделка отменена";
+        if (kind=="meditate") return "Молитва";
+        if (kind=="jump") return "Прыжок";
+        if (kind=="node_init") return "Месторождение создано";
+        if (kind=="synthesis_failed") return "Неудачный синтез";
+        if (kind=="discovery") return "Редкое открытие";
+        return "Событие";
+    }
     /** @brief Перевести плоскую позицию в 3D-координаты raylib. */
     static Vector3 at(Vec2 p, float y) noexcept { return {p.x, y, p.z}; }
 

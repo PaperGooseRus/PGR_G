@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "api/economy_contracts.hpp"
 
 namespace rpg3d {
 
@@ -114,11 +115,19 @@ struct Interaction {
 
 /** @brief Параметры пользовательского интерфейса, поступающие из Application. */
 struct HudState {
-    Interaction nearby{};         ///< Ближайшая доступная цель.
-    int activeDialogue = -1;      ///< Индекс NPC или -1, если диалог закрыт.
-    bool showHelp = false;        ///< Отобразить справку.
-    bool cursorReleased = false;  ///< Курсор освобождён.
-    bool resourceNotice = false;  ///< Показать сообщение о неподключённой добыче.
+    Interaction nearby{};           ///< Ближайшая интерактивная цель.
+    int activeDialogue = -1;        ///< Открытый разговор с NPC.
+    bool showHelp = false;          ///< Русскоязычная справка.
+    bool cursorReleased = false;    ///< Режим курсора.
+    bool showInventory = false;     ///< Панель личного инвентаря.
+    bool showJournal = false;       ///< Панель видимых событий.
+    const char* notice = nullptr;   ///< Временная подсказка, время жизни — кадр.
+    const InventorySnapshot* inventory = nullptr; ///< Не владеет снимком Application.
+    const EventRecord* events = nullptr;           ///< Не владеет журналом.
+    std::size_t eventCount = 0;     ///< Размер доступного журнала.
+    std::int64_t resourceRemaining = -1; ///< Запас выбранного месторождения.
+    std::int64_t discoveries = 0;   ///< Число открытий элемента 1024.
+    bool pendingTrade = false;      ///< Есть незавершённый NPC-заказ.
 };
 
 /** @brief Квадрат евклидова расстояния, без вызова sqrt. */
