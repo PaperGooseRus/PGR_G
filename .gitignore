@@ -1,0 +1,13 @@
+build/
+_build*/
+build-*/
+.vscode/
+*.exe
+*.o
+*.obj
+*.bak
+*.tmp
+*.log
+# Не публикуйте личные сохранения в репозитории.
+save/*.md
+!save/.gitkeep
